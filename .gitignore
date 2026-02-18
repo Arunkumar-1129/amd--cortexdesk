@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+
+# Data directories (local only, never commit)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Electron
+desktop/out/
+desktop/dist/
+
+# Python
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Models (large files)
+models/
+*.bin
+*.gguf
+*.safetensors
+
+# Chroma/Vector DB
+chroma_db/
+*.index
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
