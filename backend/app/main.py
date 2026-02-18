@@ -5,6 +5,7 @@ Main entry point for the backend API server.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
+from app.storage.db import init_db
 
 settings = get_settings()
 
@@ -14,13 +15,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Ensure DB tables exist on startup
+@app.on_event("startup")
+async def _startup():
+    init_db()
+
 # CORS middleware (only allow localhost)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_origins + ["http://localhost:5174"],  # Add common Vite ports
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 @app.get("/")
@@ -35,6 +42,11 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+@app.get("/api/health")
+async def api_health():
+    """Health check endpoint accessible from frontend."""
+    return {"status": "healthy", "version": "1.0.0"}
 
 # Import and register routers
 from app.api import ingest, meetings, research, tasks, scheduler, analytics

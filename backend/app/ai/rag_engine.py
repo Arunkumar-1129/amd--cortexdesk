@@ -1,43 +1,89 @@
 """
 RAG (Retrieval-Augmented Generation) engine.
-Semantic search over local documents using Chroma.
+
+Provides:
+- `search_documents` for semantic search over local documents.
+- `answer_question` for question answering with citations using local LLM.
 """
-from typing import List, Dict
+from typing import List, Dict, Any
+
 from app.ai.llm_client import generate
+from app.storage.vector_store import VectorStore
 
 
-async def search_documents(query: str, limit: int = 5) -> List[Dict]:
+async def search_documents(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     """
     Perform semantic search over documents.
-    
+
     Args:
         query: Search query
         limit: Maximum number of results
-    
+
     Returns:
         List of relevant document chunks with metadata
     """
-    # TODO: Implement Chroma search
-    # 1. Embed query
-    # 2. Search Chroma vector DB
-    # 3. Return top-k results with metadata
-    raise NotImplementedError("RAG search not yet implemented")
+    store = VectorStore()
+    results = store.search(query=query, limit=limit)
+    return results
 
 
-async def answer_question(query: str, context_limit: int = 5) -> Dict:
+async def answer_question(query: str, context_limit: int = 5) -> Dict[str, Any]:
     """
     Answer a question using RAG.
-    
+
     Args:
         query: User question
         context_limit: Number of document chunks to use as context
-    
+
     Returns:
-        Answer with citations
+        Dict with `answer` and `citations` (list of chunks/metadata)
     """
-    # 1. Search for relevant documents
-    # 2. Build context from top results
-    # 3. Generate answer using LLM with context
-    # 4. Return answer + citations
-    raise NotImplementedError("RAG Q&A not yet implemented")
+    # 1. Retrieve relevant document chunks
+    search_results = await search_documents(query, limit=context_limit)
+
+    if not search_results:
+        # Fallback: let LLM answer without context, but make it clear
+        answer_text = await generate(
+            prompt=(
+                "User question:\n"
+                f"{query}\n\n"
+                "No relevant documents were found in the local knowledge base. "
+                "Answer as best as you can, but mention that you couldn't find "
+                "supporting local documents."
+            )
+        )
+        return {"answer": answer_text, "citations": []}
+
+    # 2. Build context from top documents
+    context_snippets = []
+    for idx, item in enumerate(search_results, start=1):
+        meta = item.get("metadata", {}) or {}
+        source = meta.get("source", "unknown")
+        page = meta.get("page")
+        header = f"[{idx}] source={source}"
+        if page is not None:
+            header += f", page={page}"
+        header += ":\n"
+        context_snippets.append(header + item.get("text", ""))
+
+    context = "\n\n".join(context_snippets)
+
+    # 3. Ask LLM with context
+    prompt = (
+        "You are a local research assistant. Answer the user's question using "
+        "ONLY the provided context from local documents. If the context is "
+        "insufficient, say so explicitly.\n\n"
+        "Context:\n"
+        f"{context}\n\n"
+        "Question:\n"
+        f"{query}\n\n"
+        "Answer (be concise, and refer to citations like [1], [2] where relevant):"
+    )
+
+    answer_text = await generate(prompt=prompt)
+
+    return {
+        "answer": answer_text,
+        "citations": search_results,
+    }
 

@@ -16,12 +16,33 @@ def propose_schedule(task_ids: List[int]) -> List[Dict]:
     Returns:
         List of schedule proposals with time slots
     """
-    # TODO: Implement scheduling logic
-    # - Check deadlines
-    # - Consider priorities
-    # - Balance workload
-    # - Resolve conflicts
-    return []
+    # Minimal v1 scheduler:
+    # - One 30 minute block per task
+    # - Starts from the next full hour
+    now = datetime.now()
+    start = now.replace(minute=0, second=0, microsecond=0)
+    if start <= now:
+        start = start.replace(hour=start.hour + 1)
+
+    proposals: List[Dict] = []
+    for idx, task_id in enumerate(task_ids):
+        slot_start = start
+        # each task gets 30 min, stacked
+        minutes_from_start = idx * 30
+        slot_start = slot_start.replace(minute=(minutes_from_start % 60))
+        slot_hour = start.hour + (minutes_from_start // 60)
+        slot_start = slot_start.replace(hour=slot_hour)
+
+        proposals.append(
+            {
+                "proposal_id": f"{task_id}",
+                "task_id": task_id,
+                "start": slot_start.isoformat(),
+                "duration_minutes": 30,
+            }
+        )
+
+    return proposals
 
 
 def check_conflicts(proposed_time: datetime, duration_minutes: int) -> List[Dict]:
