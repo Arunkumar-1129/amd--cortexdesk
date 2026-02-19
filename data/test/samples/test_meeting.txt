@@ -1,0 +1,17 @@
+
+Meeting Notes - Q1 Planning
+Date: 2024-01-15
+
+Attendees: John, Sarah, Mike
+
+Decisions:
+- Decided: Launch new feature by March 1st
+- Agreed: Increase marketing budget by 20%
+
+Action Items:
+TODO: John will review the budget proposal by January 20th
+Sarah needs to prepare the marketing deck
+Mike should schedule follow-up meeting
+
+Deadline: All tasks must be completed before end of January
+        
