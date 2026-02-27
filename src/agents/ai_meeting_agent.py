@@ -10,7 +10,7 @@ class AIMeetingAgent(BaseAgent):
     def __init__(self, event_bus, working_memory, confirmation_panel, use_ai=True):
         super().__init__(
             agent_id="ai_meeting_agent",
-            capabilities=["extract_actions_ai", "summarize_ai", "extract_decisions_ai"],
+            capabilities=["extract_actions", "extract_actions_ai", "summarize_ai", "extract_decisions_ai"],
             event_bus=event_bus,
             working_memory=working_memory
         )
@@ -30,31 +30,42 @@ class AIMeetingAgent(BaseAgent):
         text = task.get("text", "")
         source = task.get("source", "")
         
+        print(f"[AIMeetingAgent] ===== PROCESSING STARTED =====")
         print(f"[AIMeetingAgent] Processing text from {source}")
         print(f"[AIMeetingAgent] Text length: {len(text)} characters")
+        print(f"[AIMeetingAgent] Text preview: {text[:200]}")
+        
+        actions = []
+        decisions = []
+        summary = ""
         
         if self.ai_available:
-            print("[AIMeetingAgent] Using Ollama AI extraction")
-            # AI-powered processing
-            actions = self.ollama.extract_tasks(text)
-            summary_data = self.ollama.summarize_meeting(text)
-            
-            summary = summary_data.get("summary", "")
-            decisions = summary_data.get("decisions", [])
-            
-            # Convert decisions to proper format
-            decisions = [{"decision": d, "confidence": 0.9} for d in decisions]
-            print(f"[AIMeetingAgent] AI extracted {len(actions)} actions, {len(decisions)} decisions")
-        else:
-            print("[AIMeetingAgent] Using fallback rule-based extraction")
-            # Fallback to rule-based
+            print("[AIMeetingAgent] Attempting Ollama AI extraction")
+            try:
+                actions = self.ollama.extract_tasks(text)
+                summary_data = self.ollama.summarize_meeting(text)
+                summary = summary_data.get("summary", "")
+                decisions = summary_data.get("decisions", [])
+                decisions = [{"decision": d, "confidence": 0.9} for d in decisions]
+                print(f"[AIMeetingAgent] AI extracted {len(actions)} actions, {len(decisions)} decisions")
+            except Exception as e:
+                print(f"[AIMeetingAgent] AI extraction failed: {e}")
+                print(f"[AIMeetingAgent] Falling back to rule-based extraction")
+                actions = self._extract_actions_fallback(text)
+                decisions = self._extract_decisions_fallback(text)
+                summary = self._summarize_fallback(text)
+        
+        # If AI didn't work or returned nothing, use fallback
+        if len(actions) == 0:
+            print("[AIMeetingAgent] No actions from AI, using fallback rule-based extraction")
             actions = self._extract_actions_fallback(text)
             decisions = self._extract_decisions_fallback(text)
             summary = self._summarize_fallback(text)
             print(f"[AIMeetingAgent] Fallback extracted {len(actions)} actions, {len(decisions)} decisions")
         
+        print(f"[AIMeetingAgent] Adding {len(actions)} actions to confirmation panel")
         # Send actions to confirmation panel
-        for action in actions:
+        for i, action in enumerate(actions):
             # Ensure proper format for confirmation panel
             task_data = {
                 "task": action.get("task", ""),
@@ -63,11 +74,13 @@ class AIMeetingAgent(BaseAgent):
                 "priority": action.get("priority", "normal"),
                 "confidence": action.get("confidence", 0.85)
             }
-            self.confirmation_panel.add_for_confirmation(
+            print(f"[AIMeetingAgent] Action {i+1}: {task_data['task'][:50]}...")
+            item_id = self.confirmation_panel.add_for_confirmation(
                 "task",
                 task_data,
                 task_data["confidence"]
             )
+            print(f"[AIMeetingAgent] Added to confirmation panel with ID: {item_id}")
         
         result = {
             "source": source,
@@ -79,7 +92,9 @@ class AIMeetingAgent(BaseAgent):
             "requires_confirmation": True
         }
         
+        print(f"[AIMeetingAgent] Publishing meeting_analyzed event")
         self.publish_event("meeting_analyzed", result)
+        print(f"[AIMeetingAgent] ===== PROCESSING COMPLETE =====")
         return result
     
     def _extract_actions_fallback(self, text: str) -> List[Dict[str, Any]]:

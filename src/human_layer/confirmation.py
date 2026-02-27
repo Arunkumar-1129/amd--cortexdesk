@@ -20,7 +20,9 @@ class ConfirmationPanel:
             "created_at": datetime.now().isoformat()
         }
         self.pending_items.append(item)
+        print(f"[ConfirmationPanel] Added item: {item['id']} - {data.get('task', 'N/A')[:50]}")
         self._save()
+        print(f"[ConfirmationPanel] Total pending: {len(self.get_pending())}")
         return item["id"]
     
     def get_pending(self, item_type: Optional[str] = None) -> List[Dict[str, Any]]:

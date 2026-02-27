@@ -110,9 +110,20 @@
                     <h3>📄 Upload Document</h3>
                     <div class="upload-zone" onclick="document.getElementById('fileInput').click()">
                         <p>Click to upload or drag & drop</p>
-                        <p style="font-size: 12px; color: #7f8c8d; margin-top: 10px;">PDF, DOCX, XLSX, TXT, PPTX</p>
+                        <p style="font-size: 12px; color: #7f8c8d; margin-top: 10px;">PDF, DOCX, XLSX, TXT, PPTX, PNG, JPG (OCR)</p>
                     </div>
-                    <input type="file" id="fileInput" style="display: none;" onchange="uploadFile()" accept=".pdf,.docx,.xlsx,.txt,.pptx">
+                    <input type="file" id="fileInput" style="display: none;" onchange="uploadFile()" accept=".pdf,.docx,.xlsx,.txt,.pptx,.png,.jpg,.jpeg,.bmp,.gif,.tiff">
+                </div>
+
+                <div class="card">
+                    <h3>📸 Screen Capture OCR</h3>
+                    <p style="margin-bottom: 15px;">Upload screenshot to extract text</p>
+                    <div class="upload-zone" id="screenshotZone" onclick="document.getElementById('screenshotInput').click()" style="padding: 30px;">
+                        <p>📷 Click to upload or drag & drop screenshot</p>
+                        <p style="font-size: 12px; color: #7f8c8d; margin-top: 10px;">PNG, JPG, BMP, GIF</p>
+                    </div>
+                    <input type="file" id="screenshotInput" style="display: none;" onchange="uploadScreenshot()" accept=".png,.jpg,.jpeg,.bmp,.gif">
+                    <p style="font-size: 11px; color: #95a5a6; margin-top: 10px;">💡 Tip: Press Win+Shift+S to capture screen</p>
                 </div>
 
                 <div class="card">
@@ -129,6 +140,10 @@
                         <span class="slider"></span>
                     </label>
                     <span id="meetingStatus" style="margin-left: 10px;">OFF</span>
+                    <div id="liveTranscript" style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; min-height: 60px; max-height: 150px; overflow-y: auto; display: none;">
+                        <strong>Live Transcript:</strong>
+                        <p id="transcriptText" style="margin-top: 5px; font-size: 13px; color: #555;"></p>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -268,18 +283,60 @@
             formData.append('file', file);
 
             try {
+                showAlert('info', 'Uploading file...');
                 const response = await fetch(`${API_URL}/upload`, {
                     method: 'POST',
                     body: formData
                 });
                 const data = await response.json();
-                showAlert('success', `File uploaded: ${data.filename}`);
+                
+                if (data.ocr) {
+                    showAlert('success', `✓ OCR extracted ${data.text_length} characters from ${data.filename}`);
+                } else {
+                    showAlert('success', `File uploaded: ${data.filename}`);
+                }
+                
                 setTimeout(() => {
                     loadStats();
                     loadConfirmations();
                 }, 2000);
             } catch (error) {
                 showAlert('error', 'Error uploading file: ' + error.message);
+            }
+        }
+
+        // Upload Screenshot
+        async function uploadScreenshot() {
+            const fileInput = document.getElementById('screenshotInput');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                showAlert('info', '📸 Processing screenshot with OCR...');
+                const response = await fetch(`${API_URL}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.status === 'error') {
+                    showAlert('error', data.message);
+                } else if (data.ocr) {
+                    showAlert('success', `✓ OCR extracted ${data.text_length} characters! Check Confirmations page.`);
+                    setTimeout(() => {
+                        loadStats();
+                        loadConfirmations();
+                    }, 2000);
+                } else {
+                    // Show installation guide
+                    showAlert('error', 'OCR not available. See OCR_INSTALL_GUIDE.md for installation instructions.');
+                    console.log('Install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki');
+                }
+            } catch (error) {
+                showAlert('error', 'Error processing screenshot: ' + error.message);
             }
         }
 
@@ -340,9 +397,80 @@
             }
         }
 
-        // Toggle Meeting Mode
+        // Toggle Meeting Mode with Speech Recognition
         let meetingRecording = false;
         let meetingStartTime = null;
+        let recognition = null;
+        let meetingTranscript = '';
+        
+        function initSpeechRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                showAlert('error', 'Speech recognition not supported in this browser. Use Chrome or Edge.');
+                return null;
+            }
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recog = new SpeechRecognition();
+            recog.continuous = true;
+            recog.interimResults = true;
+            recog.lang = 'en-US';
+            
+            recog.onstart = () => {
+                console.log('[Meeting] Speech recognition started');
+                showAlert('info', '🎤 Listening... Speak now!');
+            };
+            
+            recog.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                
+                if (finalTranscript) {
+                    meetingTranscript += finalTranscript;
+                    console.log('[Meeting] Captured:', finalTranscript);
+                }
+                
+                // Update live display
+                const transcriptDiv = document.getElementById('transcriptText');
+                if (transcriptDiv) {
+                    transcriptDiv.textContent = meetingTranscript + interimTranscript;
+                    transcriptDiv.parentElement.scrollTop = transcriptDiv.parentElement.scrollHeight;
+                }
+            };
+            
+            recog.onerror = (event) => {
+                console.error('[Meeting] Speech recognition error:', event.error);
+                if (event.error === 'no-speech') {
+                    console.log('[Meeting] No speech detected, continuing...');
+                    showAlert('info', 'No speech detected. Keep speaking...');
+                } else if (event.error === 'not-allowed') {
+                    showAlert('error', 'Microphone access denied! Please allow microphone in browser settings.');
+                    document.getElementById('meetingToggle').checked = false;
+                    meetingRecording = false;
+                } else if (event.error === 'network') {
+                    showAlert('error', 'Network error. Speech recognition needs internet in some browsers.');
+                } else {
+                    showAlert('error', 'Speech error: ' + event.error);
+                }
+            };
+            
+            recog.onend = () => {
+                if (meetingRecording) {
+                    console.log('[Meeting] Recognition ended, restarting...');
+                    recog.start();
+                }
+            };
+            
+            return recog;
+        }
         
         function toggleMeeting() {
             const toggle = document.getElementById('meetingToggle');
@@ -351,25 +479,113 @@
             meetingRecording = toggle.checked;
             
             if (meetingRecording) {
+                // Start recording
+                recognition = initSpeechRecognition();
+                if (!recognition) {
+                    toggle.checked = false;
+                    return;
+                }
+                
+                meetingTranscript = '';
                 meetingStartTime = new Date();
                 status.textContent = 'RECORDING';
                 status.style.color = '#27ae60';
                 status.style.fontWeight = 'bold';
-                showAlert('success', '🎤 Meeting recording started');
                 
-                // Start recording timer
-                updateMeetingTimer();
+                // Show transcript area
+                document.getElementById('liveTranscript').style.display = 'block';
+                document.getElementById('transcriptText').textContent = 'Listening...';
+                
+                try {
+                    recognition.start();
+                    showAlert('success', '🎤 Meeting recording started - speak now!');
+                    console.log('[Meeting] Recording started');
+                    updateMeetingTimer();
+                } catch (error) {
+                    console.error('[Meeting] Failed to start:', error);
+                    showAlert('error', 'Failed to start recording: ' + error.message);
+                    toggle.checked = false;
+                    meetingRecording = false;
+                    document.getElementById('liveTranscript').style.display = 'none';
+                }
             } else {
+                // Stop recording
+                if (recognition) {
+                    recognition.stop();
+                    recognition = null;
+                }
+                
                 status.textContent = 'OFF';
                 status.style.color = '#95a5a6';
                 status.style.fontWeight = 'normal';
                 
+                // Hide transcript area
+                document.getElementById('liveTranscript').style.display = 'none';
+                
                 if (meetingStartTime) {
                     const duration = Math.floor((new Date() - meetingStartTime) / 1000);
+                    console.log('[Meeting] Stopped. Duration:', duration, 'Transcript length:', meetingTranscript.length);
                     showAlert('info', `Meeting stopped. Duration: ${duration}s`);
                     meetingStartTime = null;
+                    
+                    // Process the transcript
+                    if (meetingTranscript.trim().length > 0) {
+                        processMeetingTranscript();
+                    } else {
+                        showAlert('error', 'No speech detected. Make sure microphone is working and you granted permission.');
+                    }
                 }
             }
+        }
+        
+        async function processMeetingTranscript() {
+            console.log('[Meeting] Processing transcript:', meetingTranscript);
+            showAlert('info', 'Processing meeting transcript...');
+            
+            const meetingData = {
+                timestamp: new Date().toISOString(),
+                duration: Math.floor((new Date() - meetingStartTime) / 1000),
+                transcript: meetingTranscript,
+                filename: `meeting_${new Date().getTime()}.txt`
+            };
+            
+            try {
+                const formData = new FormData();
+                const blob = new Blob([meetingTranscript], { type: 'text/plain' });
+                const file = new File([blob], meetingData.filename, { type: 'text/plain' });
+                formData.append('file', file);
+                
+                const response = await fetch(`${API_URL}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Upload failed');
+                }
+                
+                const data = await response.json();
+                
+                // Store meeting ONLY AFTER successful processing
+                storeMeetingHistory(meetingData);
+                
+                showAlert('success', '✓ Meeting saved and processed! Check Confirmations page for extracted tasks.');
+                
+                setTimeout(() => {
+                    loadStats();
+                    loadConfirmations();
+                }, 2000);
+            } catch (error) {
+                console.error('[Meeting] Processing error:', error);
+                showAlert('error', 'Error processing transcript: ' + error.message);
+            }
+        }
+        
+        function storeMeetingHistory(meeting) {
+            let meetings = JSON.parse(localStorage.getItem('meetingHistory') || '[]');
+            meetings.unshift(meeting); // Add to beginning
+            if (meetings.length > 50) meetings = meetings.slice(0, 50); // Keep last 50
+            localStorage.setItem('meetingHistory', JSON.stringify(meetings));
         }
         
         function updateMeetingTimer() {
@@ -387,6 +603,8 @@
         // Search Documents
         async function searchDocuments() {
             const query = document.getElementById('searchQuery').value;
+            console.log('[Search] Query:', query);
+            
             if (!query) {
                 showAlert('error', 'Please enter a search query');
                 return;
@@ -396,32 +614,68 @@
             resultsDiv.innerHTML = '<p style="color: #7f8c8d;">Searching...</p>';
 
             try {
+                console.log('[Search] Sending request to:', `${API_URL}/search`);
                 const response = await fetch(`${API_URL}/search`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query })
                 });
                 
-                if (!response.ok) throw new Error('Search failed');
+                console.log('[Search] Response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('[Search] Error response:', errorText);
+                    throw new Error('Search failed: ' + response.status);
+                }
                 
                 const data = await response.json();
+                console.log('[Search] Results:', data);
                 
-                // Show search initiated message
+                if (data.message) {
+                    // Empty database message
+                    resultsDiv.innerHTML = `
+                        <div class="alert info">
+                            ${data.message}<br>
+                            <small>Go to Dashboard and upload documents or use Manual Entry.</small>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                if (data.count === 0) {
+                    resultsDiv.innerHTML = `
+                        <div class="alert info">
+                            No results found for: "${query}"<br>
+                            <small>Make sure you've uploaded documents first.</small>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // Display results
                 resultsDiv.innerHTML = `
-                    <div class="alert info">
-                        ✓ Search completed for: "${query}"<br>
-                        <small>Results are being processed. Check the vector database for semantic matches.</small>
+                    <div style="margin-bottom: 15px;">
+                        <strong>Found ${data.count} results for: "${query}"</strong>
                     </div>
-                    <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 4px;">
-                        <strong>Search Tips:</strong>
-                        <ul style="margin-top: 8px; margin-left: 20px; font-size: 13px;">
-                            <li>Upload documents first to build the search index</li>
-                            <li>Use natural language queries</li>
-                            <li>Search works across all uploaded documents</li>
-                        </ul>
-                    </div>
+                    ${data.results.map((result, index) => `
+                        <div class="card" style="margin-bottom: 15px; border-left: 3px solid #3498db;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <strong style="color: #2c3e50;">Result ${index + 1}</strong>
+                                <span class="badge" style="background: #3498db;">${Math.round(result.similarity * 100)}% match</span>
+                            </div>
+                            <div style="font-size: 13px; color: #555; margin-bottom: 8px; line-height: 1.6;">
+                                ${result.text}
+                            </div>
+                            <div style="font-size: 11px; color: #7f8c8d;">
+                                📄 Source: ${result.source.split('/').pop() || result.source.split('\\').pop() || 'Unknown'}
+                            </div>
+                        </div>
+                    `).join('')}
                 `;
+                console.log('[Search] Results displayed successfully');
             } catch (error) {
+                console.error('[Search] Error:', error);
                 resultsDiv.innerHTML = `<p class="alert error">Search failed: ${error.message}</p>`;
             }
         }
@@ -578,22 +832,60 @@
 
         // Load Meetings
         async function loadMeetings() {
-            try {
-                const response = await fetch(`${API_URL}/memory/recent?days=30`);
-                const data = await response.json();
-                
-                const meetingList = document.getElementById('meetingList');
-                
-                if (!data.episodes || data.episodes.length === 0) {
-                    meetingList.innerHTML = '<p>No meetings recorded yet. Upload meeting notes to see them here.</p>';
-                    return;
-                }
-                
-                meetingList.innerHTML = '<p>Upload meeting documents to see them here. Go to Dashboard and upload a file.</p>';
-            } catch (error) {
-                console.error('Error loading meetings:', error);
-                document.getElementById('meetingList').innerHTML = '<p>Upload meeting notes to see them here.</p>';
+            const meetingList = document.getElementById('meetingList');
+            
+            // Get meetings from localStorage
+            const meetings = JSON.parse(localStorage.getItem('meetingHistory') || '[]');
+            
+            if (meetings.length === 0) {
+                meetingList.innerHTML = '<p>No meetings recorded yet. Use Live Meeting Mode to record a meeting.</p>';
+                return;
             }
+            
+            meetingList.innerHTML = meetings.map((meeting, index) => {
+                const date = new Date(meeting.timestamp);
+                const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                const duration = Math.floor(meeting.duration / 60) + 'm ' + (meeting.duration % 60) + 's';
+                const preview = meeting.transcript.substring(0, 200) + (meeting.transcript.length > 200 ? '...' : '');
+                
+                return `
+                    <div class="card" style="margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+                            <div>
+                                <strong style="font-size: 16px;">🎤 Meeting ${meetings.length - index}</strong>
+                                <div style="font-size: 12px; color: #7f8c8d; margin-top: 5px;">
+                                    📅 ${dateStr} | ⏱️ ${duration}
+                                </div>
+                            </div>
+                            <button onclick="deleteMeeting(${index})" class="danger" style="padding: 5px 10px; font-size: 12px;">🗑️ Delete</button>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 13px; color: #555; max-height: 100px; overflow-y: auto;">
+                            ${preview}
+                        </div>
+                        <button onclick="toggleFullTranscript(${index})" style="margin-top: 10px; padding: 5px 10px; font-size: 12px; background: #95a5a6;">
+                            👁️ View Full Transcript
+                        </button>
+                        <div id="fullTranscript${index}" style="display: none; margin-top: 10px; padding: 10px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; max-height: 300px; overflow-y: auto;">
+                            ${meeting.transcript}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function toggleFullTranscript(index) {
+            const element = document.getElementById(`fullTranscript${index}`);
+            element.style.display = element.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function deleteMeeting(index) {
+            if (!confirm('Delete this meeting?')) return;
+            
+            let meetings = JSON.parse(localStorage.getItem('meetingHistory') || '[]');
+            meetings.splice(index, 1);
+            localStorage.setItem('meetingHistory', JSON.stringify(meetings));
+            loadMeetings();
+            showAlert('success', 'Meeting deleted');
         }
 
         // Filter Tasks
@@ -644,6 +936,78 @@
                 fullText.style.display = fullText.style.display === 'block' ? 'none' : 'block';
             }
         }
+
+        // Drag and Drop for Screenshot
+        const screenshotZone = document.getElementById('screenshotZone');
+        
+        screenshotZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            screenshotZone.style.background = '#e3f2fd';
+            screenshotZone.style.borderColor = '#2196f3';
+        });
+        
+        screenshotZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            screenshotZone.style.background = '';
+            screenshotZone.style.borderColor = '';
+        });
+        
+        screenshotZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            screenshotZone.style.background = '';
+            screenshotZone.style.borderColor = '';
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                // Check if it's an image
+                if (file.type.startsWith('image/')) {
+                    const input = document.getElementById('screenshotInput');
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+                    input.files = dataTransfer.files;
+                    uploadScreenshot();
+                } else {
+                    showAlert('error', 'Please drop an image file (PNG, JPG, BMP, GIF)');
+                }
+            }
+        });
+        
+        // Drag and Drop for Document Upload
+        const uploadZone = document.querySelector('.upload-zone');
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadZone.style.background = '#e3f2fd';
+            uploadZone.style.borderColor = '#2196f3';
+        });
+        
+        uploadZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadZone.style.background = '';
+            uploadZone.style.borderColor = '';
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadZone.style.background = '';
+            uploadZone.style.borderColor = '';
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const input = document.getElementById('fileInput');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(files[0]);
+                input.files = dataTransfer.files;
+                uploadFile();
+            }
+        });
 
         // Initialize
         loadStats();

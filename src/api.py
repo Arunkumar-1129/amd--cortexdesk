@@ -2,13 +2,24 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from contextlib import asynccontextmanager
 import os
 import sys
 import shutil
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.core.workspace_assistant import WorkspaceAssistant
 
-app = FastAPI(title="Local AI Workspace Assistant")
+assistant = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global assistant
+    assistant = WorkspaceAssistant(data_dir="data")
+    assistant.start()
+    yield
+    assistant.stop()
+
+app = FastAPI(title="Local AI Workspace Assistant", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,22 +29,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-assistant = WorkspaceAssistant(data_dir="data")
-
 class SearchQuery(BaseModel):
     query: str
 
 class TaskUpdate(BaseModel):
     task_id: int
     status: str
-
-@app.on_event("startup")
-async def startup_event():
-    assistant.start()
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    assistant.stop()
 
 @app.get("/")
 async def root():
@@ -55,16 +56,43 @@ async def upload_file(file: UploadFile = File(...)):
         
         file_path = os.path.join(upload_dir, file.filename)
         
-        # Save file
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
         
-        print(f"✓ File saved: {file_path}")
+        print(f"[OK] File saved: {file_path}")
         
-        # Process file
+        # Check if image file for OCR
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif']:
+            print(f"[OK] Image detected, performing OCR...")
+            try:
+                from src.ocr import extract_text_from_image, is_ocr_available
+                
+                if is_ocr_available():
+                    extracted_text = extract_text_from_image(file_path)
+                    print(f"[OK] OCR extracted {len(extracted_text)} characters")
+                    
+                    text_file_path = file_path + ".txt"
+                    with open(text_file_path, "w", encoding="utf-8") as f:
+                        f.write(extracted_text)
+                    
+                    assistant.process_file(text_file_path)
+                    
+                    return {
+                        "filename": file.filename,
+                        "status": "processing",
+                        "ocr": True,
+                        "text_length": len(extracted_text)
+                    }
+                else:
+                    return {"filename": file.filename, "status": "error", "message": "OCR not available. Install Tesseract."}
+            except Exception as e:
+                print(f"[ERROR] OCR failed: {str(e)}")
+                return {"filename": file.filename, "status": "error", "message": f"OCR failed: {str(e)}"}
+        
         assistant.process_file(file_path)
-        print(f"✓ File processing started")
+        print(f"[OK] File processing started")
         
         return {
             "filename": file.filename,
@@ -72,15 +100,48 @@ async def upload_file(file: UploadFile = File(...)):
             "path": file_path
         }
     except Exception as e:
-        print(f"✗ Upload error: {str(e)}")
+        print(f"[ERROR] Upload error: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/search")
 async def search(query: SearchQuery):
-    assistant.search(query.query)
-    return {"query": query.query, "status": "searching"}
+    try:
+        # Check if vector DB has data
+        if not assistant.vector_db.vectors:
+            return {
+                "query": query.query,
+                "results": [],
+                "count": 0,
+                "message": "No documents indexed yet. Upload some documents first."
+            }
+        
+        # Perform semantic search directly
+        query_vector = assistant.embedding_model.encode(query.query)
+        results = assistant.vector_db.search(query_vector, top_k=5)
+        
+        # Format results for display
+        formatted_results = []
+        for result in results:
+            metadata = result.get("metadata", {})
+            formatted_results.append({
+                "text": metadata.get("text", "")[:500],  # First 500 chars
+                "source": metadata.get("source", "Unknown"),
+                "similarity": float(result.get("similarity", 0)),
+                "timestamp": metadata.get("timestamp", "")
+            })
+        
+        return {
+            "query": query.query,
+            "results": formatted_results,
+            "count": len(formatted_results)
+        }
+    except Exception as e:
+        print(f"[ERROR] Search failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
 
 @app.get("/tasks")
 async def get_tasks():

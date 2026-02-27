@@ -54,11 +54,37 @@ class SimpleEmbedding:
     def __init__(self):
         self.dimension = 384
     
+    def _tokenize(self, text):
+        """Simple tokenization"""
+        import re
+        text = text.lower()
+        words = re.findall(r'\b\w+\b', text)
+        return words
+    
     def encode(self, text: str) -> np.ndarray:
-        # Simple hash-based embedding for minimal implementation
-        # In production, use sentence-transformers
-        np.random.seed(hash(text) % (2**32))
-        return np.random.randn(self.dimension)
+        """Encode text to vector using word hashing"""
+        words = self._tokenize(text)
+        vector = np.zeros(self.dimension)
+        
+        if not words:
+            return vector
+        
+        # Use word hashing to map words to vector positions
+        for word in words:
+            # Hash word to get index
+            word_hash = hash(word) % self.dimension
+            # Increment that position (term frequency)
+            vector[word_hash] += 1
+        
+        # Normalize by document length
+        vector = vector / len(words)
+        
+        # L2 normalize
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector = vector / norm
+        
+        return vector
     
     def encode_batch(self, texts: List[str]) -> np.ndarray:
         return np.array([self.encode(text) for text in texts])

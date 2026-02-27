@@ -36,9 +36,9 @@ class WorkspaceAssistant:
         self.ollama = OllamaClient()
         self.ai_enabled = self.ollama.is_available()
         if self.ai_enabled:
-            print("✅ Ollama detected - AI-powered processing enabled")
+            print("[OK] Ollama detected - AI-powered processing enabled")
         else:
-            print("⚠️  Ollama not available - using rule-based processing")
+            print("[WARN] Ollama not available - using rule-based processing")
         
         # Initialize agent registry
         self.registry = AgentRegistry()
@@ -82,12 +82,20 @@ class WorkspaceAssistant:
         print(f"[WorkspaceAssistant] Document processed event received")
         payload = event["payload"]
         text = payload.get("text", "")
+        print(f"[WorkspaceAssistant] Text length: {len(text)} chars")
         
-        # Index document for research
-        self.research_agent.index_document(text, {
-            "source": payload.get("file_path", ""),
-            "timestamp": event["timestamp"]
-        })
+        # Chunk text for better search (500 char chunks with 100 char overlap)
+        chunks = self._chunk_text(text, chunk_size=500, overlap=100)
+        print(f"[WorkspaceAssistant] Created {len(chunks)} chunks for indexing")
+        
+        # Index each chunk
+        for i, chunk in enumerate(chunks):
+            self.research_agent.index_document(chunk, {
+                "source": payload.get("file_path", ""),
+                "timestamp": event["timestamp"],
+                "chunk_id": i,
+                "total_chunks": len(chunks)
+            })
         
         # Analyze for meeting content
         print(f"[WorkspaceAssistant] Routing to meeting agent for extraction")
@@ -96,15 +104,42 @@ class WorkspaceAssistant:
             "text": text,
             "source": payload.get("file_path", "")
         })
+        print(f"[WorkspaceAssistant] Task routed to supervisor")
+    
+    def _chunk_text(self, text, chunk_size=500, overlap=100):
+        """Split text into overlapping chunks for better search"""
+        if len(text) <= chunk_size:
+            return [text]
+        
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            chunk = text[start:end]
+            
+            # Try to break at sentence boundary
+            if end < len(text):
+                last_period = chunk.rfind('.')
+                last_newline = chunk.rfind('\n')
+                break_point = max(last_period, last_newline)
+                if break_point > chunk_size * 0.5:  # At least 50% of chunk
+                    chunk = chunk[:break_point + 1]
+                    end = start + break_point + 1
+            
+            chunks.append(chunk.strip())
+            start = end - overlap  # Overlap for context
+        
+        return chunks
     
     def _on_meeting_analyzed(self, event):
         payload = event["payload"]
+        actions = payload.get("actions", [])
         
-        # Synthesize tasks
-        self.supervisor.route_task({
-            "capability": "synthesize_tasks",
-            "actions": payload.get("actions", [])
-        })
+        print(f"[WorkspaceAssistant] Meeting analyzed: {len(actions)} actions extracted")
+        print(f"[WorkspaceAssistant] Actions are in confirmation panel, waiting for human approval")
+        
+        # Don't synthesize tasks - they're already in confirmation panel
+        # Tasks will be added to task_agent only after approval
     
     def _on_tasks_synthesized(self, event):
         print(f"Tasks synthesized: {event['payload']['count']} tasks")

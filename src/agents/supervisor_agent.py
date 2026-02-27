@@ -11,12 +11,15 @@ class SupervisorAgent:
     
     def route_task(self, task: Dict[str, Any]):
         capability = task.get("capability")
+        print(f"[Supervisor] Routing task with capability: {capability}")
         agent = self.registry.find_agent_for_capability(capability)
         
         if agent:
+            print(f"[Supervisor] Found agent: {agent.agent_id}")
             agent.enqueue_task(task)
         else:
-            print(f"No agent found for capability: {capability}")
+            print(f"[Supervisor] ERROR: No agent found for capability: {capability}")
+            print(f"[Supervisor] Available capabilities: {list(self.registry.capabilities.keys())}")
     
     def start(self):
         self.running = True
